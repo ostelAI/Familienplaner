@@ -12,7 +12,7 @@ export const uid = () =>
         return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
       });
 
-const MEMBER_FIELDS = ['id', 'name', 'color', 'avatar_url', 'sort_order'];
+const MEMBER_FIELDS = ['id', 'name', 'color', 'avatar_path', 'sort_order'];
 const TASK_FIELDS = ['id', 'title', 'member_id', 'date', 'repeat_days', 'end_date'];
 const EVENT_FIELDS = ['id', 'title', 'date', 'start_time', 'end_time', 'member_ids', 'note', 'repeat_days', 'end_date'];
 const CALENDAR_FIELDS = ['id', 'name', 'url', 'member_id'];
@@ -37,6 +37,10 @@ export async function createStore() {
 // Supabase
 // ---------------------------------------------------------------------------
 
+// Läuft im Supabase-Projekt des Haushaltsbuchs: gleiche Logins, Zugriff nur für Mitglieder des Haushalts.
+const AVATAR_BUCKET = 'planner-avatars';
+const SIGNED_URL_SECONDS = 7 * 24 * 3600;
+
 async function createSupabaseStore() {
   const { createClient } = await import(SUPABASE_JS);
   const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
@@ -48,12 +52,35 @@ async function createSupabaseStore() {
     return data;
   };
 
+  // Haushalt des angemeldeten Nutzers (aus dem Haushaltsbuch)
+  let household = null;
+  const householdId = () => {
+    if (!household) throw new Error('Kein Haushalt geladen');
+    return household.id;
+  };
+  const scoped = table => sb.from(table).select('*').eq('household_id', householdId());
+  const withHousehold = row => ({ ...row, household_id: householdId() });
+
   const loadRange = async (table, from, to) => {
     const [single, recurring] = await Promise.all([
-      sb.from(table).select('*').eq('recurring', false).gte('date', from).lte('date', to),
-      sb.from(table).select('*').eq('recurring', true).lte('date', to).or(`end_date.is.null,end_date.gte.${from}`),
+      scoped(table).eq('recurring', false).gte('date', from).lte('date', to),
+      scoped(table).eq('recurring', true).lte('date', to).or(`end_date.is.null,end_date.gte.${from}`),
     ]);
     return [...check(single), ...check(recurring)];
+  };
+
+  // Signierte Bild-Links zwischenspeichern, damit Bilder nicht bei jedem Neuladen neu geladen werden
+  const signedUrls = new Map();
+  const withAvatarUrls = async members => {
+    const now = Date.now();
+    const missing = [...new Set(members.map(m => m.avatar_path).filter(p => p && !(signedUrls.get(p)?.expires > now)))];
+    if (missing.length) {
+      const data = check(await sb.storage.from(AVATAR_BUCKET).createSignedUrls(missing, SIGNED_URL_SECONDS));
+      for (const item of data) {
+        if (item.signedUrl) signedUrls.set(item.path, { url: item.signedUrl, expires: now + (SIGNED_URL_SECONDS - 3600) * 1000 });
+      }
+    }
+    return members.map(m => ({ ...m, avatar_url: m.avatar_path ? signedUrls.get(m.avatar_path)?.url ?? null : null }));
   };
 
   return {
@@ -64,33 +91,53 @@ async function createSupabaseStore() {
       return data.session;
     },
     onAuthChange(cb) {
-      const { data } = sb.auth.onAuthStateChange((_event, session) => cb(session));
+      const { data } = sb.auth.onAuthStateChange((_event, session) => {
+        if (!session) household = null;
+        cb(session);
+      });
       return () => data.subscription.unsubscribe();
     },
     async signIn(email, password) {
       check(await sb.auth.signInWithPassword({ email, password }));
     },
     async signOut() {
+      household = null;
       await sb.auth.signOut();
+    },
+
+    // null = angemeldet, aber in keinem Haushalt
+    async loadHousehold() {
+      const { data: auth } = await sb.auth.getUser();
+      if (!auth?.user) return null;
+      const rows = check(
+        await sb
+          .from('household_members')
+          .select('household_id, joined_at, households(name)')
+          .eq('user_id', auth.user.id)
+          .order('joined_at')
+          .limit(1)
+      );
+      household = rows[0] ? { id: rows[0].household_id, name: rows[0].households?.name || 'Haushalt' } : null;
+      return household;
     },
 
     async load(from, to) {
       const [members, tasks, events, completions, calendars, calendarEvents] = await Promise.all([
-        sb.from('members').select('*').order('sort_order').order('created_at').then(check),
-        loadRange('tasks', from, to),
-        loadRange('events', from, to),
-        sb.from('task_completions').select('task_id,date').gte('date', from).lte('date', to).then(check),
-        sb.from('calendars').select('*').order('created_at').then(check),
-        sb.from('calendar_events').select('*').lte('date', to).gte('end_date', from).then(check),
+        scoped('planner_members').order('sort_order').order('created_at').then(check).then(withAvatarUrls),
+        loadRange('planner_tasks', from, to),
+        loadRange('planner_events', from, to),
+        sb.from('planner_completions').select('task_id,date').eq('household_id', householdId()).gte('date', from).lte('date', to).then(check),
+        scoped('planner_calendars').order('created_at').then(check),
+        scoped('planner_calendar_events').lte('date', to).gte('end_date', from).then(check),
       ]);
       return { members, tasks, events, completions, calendars, calendarEvents };
     },
 
     async saveCalendar(c) {
-      check(await sb.from('calendars').upsert(pick(withId(c), CALENDAR_FIELDS)));
+      check(await sb.from('planner_calendars').upsert(withHousehold(pick(withId(c), CALENDAR_FIELDS))));
     },
     async deleteCalendar(id) {
-      check(await sb.from('calendars').delete().eq('id', id));
+      check(await sb.from('planner_calendars').delete().eq('id', id));
     },
     async syncCalendars(calendarId) {
       const { data, error } = await sb.functions.invoke('sync-calendars', {
@@ -107,38 +154,40 @@ async function createSupabaseStore() {
     },
 
     async saveMember(m) {
-      check(await sb.from('members').upsert(pick(withId(m), MEMBER_FIELDS)));
+      check(await sb.from('planner_members').upsert(withHousehold(pick(withId(m), MEMBER_FIELDS))));
     },
     async deleteMember(id) {
-      check(await sb.from('members').delete().eq('id', id));
+      check(await sb.from('planner_members').delete().eq('id', id));
     },
+    // Liefert { path, url }: path wird gespeichert, url nur zur Vorschau
     async uploadAvatar(blob) {
-      const path = `${uid()}.jpg`;
-      check(await sb.storage.from('avatars').upload(path, blob, { contentType: 'image/jpeg' }));
-      return sb.storage.from('avatars').getPublicUrl(path).data.publicUrl;
+      const path = `${householdId()}/${uid()}.jpg`;
+      check(await sb.storage.from(AVATAR_BUCKET).upload(path, blob, { contentType: 'image/jpeg' }));
+      const [member] = await withAvatarUrls([{ avatar_path: path }]);
+      return { path, url: member.avatar_url };
     },
 
     async saveTask(t) {
-      check(await sb.from('tasks').upsert(pick(withId(t), TASK_FIELDS)));
+      check(await sb.from('planner_tasks').upsert(withHousehold(pick(withId(t), TASK_FIELDS))));
     },
     async deleteTask(id) {
-      check(await sb.from('tasks').delete().eq('id', id));
+      check(await sb.from('planner_tasks').delete().eq('id', id));
     },
     async setCompletion(taskId, date, done) {
-      if (done) check(await sb.from('task_completions').upsert({ task_id: taskId, date }));
-      else check(await sb.from('task_completions').delete().eq('task_id', taskId).eq('date', date));
+      if (done) check(await sb.from('planner_completions').upsert(withHousehold({ task_id: taskId, date })));
+      else check(await sb.from('planner_completions').delete().eq('task_id', taskId).eq('date', date));
     },
 
     async saveEvent(e) {
-      check(await sb.from('events').upsert(pick(withId(e), EVENT_FIELDS)));
+      check(await sb.from('planner_events').upsert(withHousehold(pick(withId(e), EVENT_FIELDS))));
     },
     async deleteEvent(id) {
-      check(await sb.from('events').delete().eq('id', id));
+      check(await sb.from('planner_events').delete().eq('id', id));
     },
 
     subscribe(cb) {
       const channel = sb.channel('familienplaner-changes');
-      for (const table of ['members', 'tasks', 'events', 'task_completions', 'calendars']) {
+      for (const table of ['planner_members', 'planner_tasks', 'planner_events', 'planner_completions', 'planner_calendars']) {
         channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => cb());
       }
       channel.subscribe();
@@ -200,10 +249,13 @@ function createLocalStore() {
     },
     async signIn() {},
     async signOut() {},
+    async loadHousehold() {
+      return { id: 'demo', name: 'Demo' };
+    },
 
     async load(from, to) {
       return structuredClone({
-        members: [...db.members].sort((a, b) => a.sort_order - b.sort_order),
+        members: [...db.members].sort((a, b) => a.sort_order - b.sort_order).map(m => ({ ...m, avatar_url: m.avatar_path || null })),
         tasks: db.tasks.filter(inRange(from, to)),
         events: db.events.filter(inRange(from, to)),
         completions: db.completions.filter(c => c.date >= from && c.date <= to),
@@ -239,7 +291,7 @@ function createLocalStore() {
     async uploadAvatar(blob) {
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
+        reader.onload = () => resolve({ path: reader.result, url: reader.result });
         reader.onerror = reject;
         reader.readAsDataURL(blob);
       });
@@ -291,10 +343,10 @@ function seedDemo() {
 
   return {
     members: [
-      { id: mama, name: 'Mama', color: '#d66ba0', avatar_url: null, sort_order: 0 },
-      { id: papa, name: 'Papa', color: '#4d96ff', avatar_url: null, sort_order: 1 },
-      { id: lena, name: 'Lena', color: '#f4a259', avatar_url: null, sort_order: 2 },
-      { id: tim, name: 'Tim', color: '#43aa8b', avatar_url: null, sort_order: 3 },
+      { id: mama, name: 'Mama', color: '#d66ba0', avatar_path: null, sort_order: 0 },
+      { id: papa, name: 'Papa', color: '#4d96ff', avatar_path: null, sort_order: 1 },
+      { id: lena, name: 'Lena', color: '#f4a259', avatar_path: null, sort_order: 2 },
+      { id: tim, name: 'Tim', color: '#43aa8b', avatar_path: null, sort_order: 3 },
     ],
     tasks: [
       t('Geschirrspüler ausräumen', lena, day(0), [1, 3, 5]),

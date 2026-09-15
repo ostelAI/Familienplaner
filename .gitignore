@@ -5,3 +5,6 @@ supabase/.temp/
 supabase/.branches/
 .env
 .env.*
+
+# Werkzeug-Konfiguration
+.claude/

@@ -172,9 +172,38 @@ function App({ store }) {
     return store.onAuthChange(setSession);
   }, [store]);
 
+  // Haushalt aus dem Haushaltsbuch: nur Mitglieder dürfen in den Planer
+  const [household, setHousehold] = useState(undefined);
+  const [householdError, setHouseholdError] = useState(null);
+  const userId = session?.user?.id ?? (session ? 'demo' : null);
+  useEffect(() => {
+    if (!userId) return;
+    setHousehold(undefined);
+    setHouseholdError(null);
+    store.loadHousehold().then(setHousehold, err => setHouseholdError(err.message || String(err)));
+  }, [store, userId]);
+
   if (session === undefined) return html`<div class="splash">Lade …</div>`;
   if (!session) return html`<${Login} store=${store} />`;
-  return html`<${Planner} store=${store} />`;
+  if (householdError) return html`<${NoAccess} store=${store} message=${`Fehler beim Laden: ${householdError}`} />`;
+  if (household === undefined) return html`<div class="splash">Lade …</div>`;
+  if (!household) {
+    return html`<${NoAccess} store=${store}
+      message="Dieses Konto gehört zu keinem Haushalt. Der Familienplaner ist nur für Mitglieder eures Haushalts aus dem Haushaltsbuch zugänglich." />`;
+  }
+  return html`<${Planner} key=${household.id} store=${store} />`;
+}
+
+function NoAccess({ store, message }) {
+  return html`
+    <div class="login">
+      <div class="login-card">
+        <img src="icon.svg" alt="" width="64" height="64" />
+        <h1>Kein Zugriff</h1>
+        <p class="muted">${message}</p>
+        <button class="btn block" onClick=${() => store.signOut()}>Abmelden</button>
+      </div>
+    </div>`;
 }
 
 function Login({ store }) {
@@ -200,6 +229,7 @@ function Login({ store }) {
       <form class="login-card" onSubmit=${submit}>
         <img src="icon.svg" alt="" width="64" height="64" />
         <h1>Familienplaner</h1>
+        <p class="muted small">Anmelden mit denselben Zugangsdaten wie im Haushaltsbuch.</p>
         <label class="field"><span>E-Mail</span>
           <input type="email" autocomplete="username" required value=${email} onInput=${e => setEmail(e.target.value)} />
         </label>
@@ -829,7 +859,8 @@ function CalendarEventDialog({ event, membersById, onClose }) {
 function MemberForm({ store, member, sortOrder, onSave, onDelete, onBack }) {
   const [name, setName] = useState(member?.name || '');
   const [color, setColor] = useState(member?.color || COLORS[sortOrder % COLORS.length]);
-  const [avatar, setAvatar] = useState(member?.avatar_url || null);
+  // { path, url } – path wird gespeichert, url dient der Vorschau
+  const [avatar, setAvatar] = useState(member?.avatar_path ? { path: member.avatar_path, url: member.avatar_url } : null);
   const [uploading, setUploading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
@@ -865,14 +896,14 @@ function MemberForm({ store, member, sortOrder, onSave, onDelete, onBack }) {
   const submit = e => {
     e.preventDefault();
     if (!name.trim()) return;
-    guard(() => onSave({ id: member?.id, name: name.trim(), color, avatar_url: avatar, sort_order: member?.sort_order ?? sortOrder }));
+    guard(() => onSave({ id: member?.id, name: name.trim(), color, avatar_path: avatar?.path ?? null, sort_order: member?.sort_order ?? sortOrder }));
   };
 
   const remove = () => {
     if (confirm(`${member.name} entfernen? Aufgaben bleiben erhalten und gelten dann für alle.`)) guard(() => onDelete(member.id));
   };
 
-  const preview = { name: name || '?', color, avatar_url: avatar };
+  const preview = { name: name || '?', color, avatar_url: avatar?.url };
 
   const footer = html`
     ${member && html`<button type="button" class="btn danger" disabled=${busy} onClick=${remove}>Entfernen</button>`}

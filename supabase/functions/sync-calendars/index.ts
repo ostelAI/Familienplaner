@@ -39,7 +39,7 @@ Deno.serve(async req => {
     // kein Body → alle Kalender
   }
 
-  let query = sb.from('calendars').select('*');
+  let query = sb.from('planner_calendars').select('*');
   if (body.calendar_id) query = query.eq('id', body.calendar_id);
   const { data: calendars, error } = await query;
   if (error) return json({ error: error.message }, 500);
@@ -53,7 +53,7 @@ Deno.serve(async req => {
   return json({ results });
 });
 
-async function syncCalendar(sb: SupabaseClient, calendar: { id: string; url: string }, from: string, to: string) {
+async function syncCalendar(sb: SupabaseClient, calendar: { id: string; url: string; household_id: string }, from: string, to: string) {
   try {
     const url = calendar.url.trim().replace(/^webcals?:\/\//i, 'https://');
     if (!/^https?:\/\//i.test(url)) throw new Error('Ungültiger Link – er muss mit https:// oder webcal:// beginnen');
@@ -69,23 +69,24 @@ async function syncCalendar(sb: SupabaseClient, calendar: { id: string; url: str
     const rows = expandCalendar(ICAL, text, { from, to, timeZone: TIME_ZONE }).map(row => ({
       ...row,
       calendar_id: calendar.id,
+      household_id: calendar.household_id,
     }));
 
-    const del = await sb.from('calendar_events').delete().eq('calendar_id', calendar.id);
+    const del = await sb.from('planner_calendar_events').delete().eq('calendar_id', calendar.id);
     if (del.error) throw del.error;
     for (let i = 0; i < rows.length; i += 500) {
-      const ins = await sb.from('calendar_events').insert(rows.slice(i, i + 500));
+      const ins = await sb.from('planner_calendar_events').insert(rows.slice(i, i + 500));
       if (ins.error) throw ins.error;
     }
 
     await sb
-      .from('calendars')
+      .from('planner_calendars')
       .update({ last_synced_at: new Date().toISOString(), last_error: null, event_count: rows.length })
       .eq('id', calendar.id);
     return { id: calendar.id, count: rows.length };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    await sb.from('calendars').update({ last_synced_at: new Date().toISOString(), last_error: message }).eq('id', calendar.id);
+    await sb.from('planner_calendars').update({ last_synced_at: new Date().toISOString(), last_error: message }).eq('id', calendar.id);
     return { id: calendar.id, error: message };
   }
 }
