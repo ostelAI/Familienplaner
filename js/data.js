@@ -30,7 +30,9 @@ export function occursOn(item, iso, weekday) {
 }
 
 export async function createStore() {
-  return SUPABASE_URL && SUPABASE_KEY ? createSupabaseStore() : createLocalStore();
+  // ?demo in der Adresse erzwingt den lokalen Demo-Modus (zum Ausprobieren, ohne echte Daten)
+  const forceDemo = new URLSearchParams(location.search).has('demo');
+  return SUPABASE_URL && SUPABASE_KEY && !forceDemo ? createSupabaseStore() : createLocalStore();
 }
 
 // ---------------------------------------------------------------------------

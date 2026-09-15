@@ -1,6 +1,6 @@
 # Familienplaner
 
-Version 1.0.0
+Version 1.0.1
 
 Wochenplaner für die Familie: Montag bis Sonntag nebeneinander, Aufgaben zum Abhaken, Termine und Familienmitglieder mit Foto.
 Gedacht für ein Tablet in der Küche. Einträge kommen auch vom Handy. Änderungen erscheinen per Supabase Realtime sofort auf allen Geräten.

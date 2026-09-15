@@ -5,7 +5,9 @@ import { createStore, isRecurring, occursOn, uid } from './data.js';
 import * as D from './dates.js';
 
 const COLORS = ['#ef6f6c', '#f4a259', '#e9c46a', '#5bb381', '#43aa8b', '#4d96ff', '#7b6cf6', '#d66ba0', '#8d6e63', '#64748b'];
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
+// Muss zur Media Query der Listenansicht in style.css passen
+const LIST_LAYOUT_QUERY = '(max-width: 899px) and (orientation: portrait), (max-width: 899px) and (max-height: 499px)';
 const SYNC_INTERVAL_MS =15 * 60 * 1000;
 const TASK_SUGGESTIONS =['Zimmer aufräumen', 'Geschirrspüler ausräumen', 'Tisch decken', 'Müll rausbringen', 'Hausaufgaben', 'Blumen gießen'];
 
@@ -314,7 +316,7 @@ function Planner({ store }) {
   useEffect(() => {
     if (!data || scrolled.current) return;
     scrolled.current = true;
-    if (window.matchMedia('(max-width: 899px)').matches) {
+    if (window.matchMedia(LIST_LAYOUT_QUERY).matches) {
       document.querySelector('.day.today')?.scrollIntoView({ block: 'start' });
     }
   }, [data]);
