@@ -397,6 +397,7 @@ code { font-size: 0.9em; background: var(--surface-2); padding: 1px 5px; border-
 .row-text small { display: block; font-size: 12px; font-weight: 600; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-text small.error-text { color: var(--danger); white-space: normal; }
 .small { font-size: 13px; margin: 4px 0 8px; }
+.version { text-align: center; margin-top: 18px; }
 .notice { background: var(--accent-soft); border-radius: 12px; padding: 10px 12px; font-weight: 600; font-size: 14px; }
 .help { margin: 4px 0 0; padding-left: 22px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .detail-list { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 14px; }

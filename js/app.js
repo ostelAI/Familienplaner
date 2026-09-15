@@ -5,7 +5,8 @@ import { createStore, isRecurring, occursOn, uid } from './data.js';
 import * as D from './dates.js';
 
 const COLORS = ['#ef6f6c', '#f4a259', '#e9c46a', '#5bb381', '#43aa8b', '#4d96ff', '#7b6cf6', '#d66ba0', '#8d6e63', '#64748b'];
-const SYNC_INTERVAL_MS = 15 * 60 * 1000;
+const APP_VERSION = '1.0.0';
+const SYNC_INTERVAL_MS =15 * 60 * 1000;
 const TASK_SUGGESTIONS =['Zimmer aufräumen', 'Geschirrspüler ausräumen', 'Tisch decken', 'Müll rausbringen', 'Hausaufgaben', 'Blumen gießen'];
 
 // ---------------------------------------------------------------------------
@@ -755,6 +756,7 @@ function SettingsDialog({
       ${store.mode === 'demo'
         ? html`<p class="muted">Demo-Modus: Die Daten liegen nur in diesem Browser. Trage deine Supabase-Daten in <code>js/config.js</code> ein, um Tablet und Handys zu verbinden.</p>`
         : html`<button class="btn danger block" onClick=${() => confirm('Wirklich abmelden?') && store.signOut()}>Abmelden</button>`}
+      <p class="muted small version">Familienplaner ${APP_VERSION}</p>
     <//>`;
 }
 
