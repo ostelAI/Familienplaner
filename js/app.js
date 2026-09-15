@@ -219,7 +219,14 @@ function Login({ store }) {
     try {
       await store.signIn(email.trim(), password);
     } catch (err) {
-      setError(err.message || 'Anmeldung fehlgeschlagen');
+      const message = err.message || '';
+      setError(
+        /invalid login credentials/i.test(message)
+          ? 'E-Mail oder Passwort ist falsch.'
+          : /failed to fetch|network/i.test(message)
+            ? 'Keine Verbindung. Bitte Internet prüfen.'
+            : message || 'Anmeldung fehlgeschlagen'
+      );
       setBusy(false);
     }
   };
